@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="work-area full" data-page="results" data-job-id="{{ job_id }}">
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Итоговый отчет</p>
+      <h1>Результаты анализа</h1>
+    </div>
+    <div class="toolbar">
+      <a class="btn ghost" href="/api/reports/{{ job_id }}.csv">CSV</a>
+      <a class="btn ghost" href="/api/reports/{{ job_id }}.xlsx">XLSX</a>
+    </div>
+  </header>
+
+  <section class="summary-strip">
+    <div><span>Файлов</span><strong id="summaryTotal">0</strong></div>
+    <div><span>С нарушениями</span><strong id="summaryBad">0</strong></div>
+    <div><span>Успешно</span><strong id="summarySuccess">0</strong></div>
+    <div><span>Среднее время</span><strong id="summaryTime">0 c</strong></div>
+  </section>
+
+  <section class="results-layout">
+    <div class="panel">
+      <div class="section-head">
+        <p>Таблица</p>
+        <span>формат ТЗ</span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Файл</th>
+              <th>Область</th>
+              <th>Сторона</th>
+              <th>Класс</th>
+              <th>Вероятность</th>
+              <th>Нарушения</th>
+              <th>Время</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="resultsTable"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</section>
+{% endblock %}

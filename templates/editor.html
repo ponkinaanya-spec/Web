@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="work-area full" data-page="editor" data-study-id="{{ study_id }}">
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Ручная проверка</p>
+      <h1>Верификация исследования</h1>
+    </div>
+    <div class="toolbar">
+      <a class="btn ghost" href="/archive">Архив</a>
+      <button class="btn primary" id="saveReviewTop">Сохранить изменения</button>
+    </div>
+  </header>
+
+  <section class="editor-layout">
+    <section class="viewer-panel">
+      <div class="viewer-toolbar">
+        <div>
+          <strong id="editorFileName">Исследование</strong>
+          <span id="editorStatus">-</span>
+        </div>
+        <div class="toolbar compact">
+          <button class="btn ghost icon-btn" id="zoomOut" title="Уменьшить масштаб">-</button>
+          <span class="zoom-readout" id="zoomValue">100%</span>
+          <button class="btn ghost icon-btn" id="zoomIn" title="Увеличить масштаб">+</button>
+          <button class="btn ghost" id="zoomReset">1:1</button>
+          <button class="btn ghost" id="addPoint">+ узел</button>
+          <button class="btn ghost" id="removePoint">- узел</button>
+          <button class="btn ghost" id="addMarker">Маркер</button>
+        </div>
+      </div>
+      <canvas id="contourCanvas" width="980" height="700"></canvas>
+      <div class="viewer-settings">
+        <div class="section-head">
+          <p>Просмотр снимка</p>
+          <span>только для просмотра</span>
+        </div>
+        <label class="range-row">
+          <span>Яркость снимка</span>
+          <input id="imageBrightnessRange" type="range" min="70" max="130" value="100">
+        </label>
+        <label class="range-row">
+          <span>Контраст снимка</span>
+          <input id="imageContrastRange" type="range" min="70" max="140" value="100">
+        </label>
+        <label class="field-row">
+          <span>Единицы измерения</span>
+          <select id="unitSelect">
+            <option value="mm">Миллиметры</option>
+            <option value="cm">Сантиметры</option>
+            <option value="px">Пиксели</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <aside class="editor-side">
+      <div class="section-head">
+        <p>Заключение</p>
+        <span>редактируется врачом</span>
+      </div>
+
+      <div class="form-grid">
+        <label class="field-row">
+          <span>Анатомическая область</span>
+          <select id="reviewRegion">
+            <option value="Поясничный отдел позвоночника">Поясничный отдел позвоночника</option>
+            <option value="Проксимальный отдел бедра">Проксимальный отдел бедра</option>
+          </select>
+        </label>
+        <label class="field-row" id="lateralityField">
+          <span>Сторона бедра</span>
+          <select id="reviewLaterality">
+            <option value="">Не указана</option>
+            <option value="Левое бедро">Левое бедро</option>
+            <option value="Правое бедро">Правое бедро</option>
+          </select>
+        </label>
+        <label class="field-row">
+          <span>Класс качества</span>
+          <select id="reviewClass">
+            <option value="0">Качественное исследование</option>
+            <option value="1">Есть нарушение</option>
+          </select>
+        </label>
+        <label class="field-row">
+          <span>Вероятность нарушения</span>
+          <input id="reviewProb" type="number" min="0" max="1" step="0.001">
+        </label>
+        <label class="field-row">
+          <span>Статус обработки</span>
+          <select id="reviewStatus">
+            <option value="Success">Success</option>
+            <option value="Failure">Failure</option>
+            <option value="ManualReview">ManualReview</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="check-panel">
+        <p>Нарушения качества</p>
+        <div id="violationChecklist" class="check-list"></div>
+      </div>
+
+      <label class="field-row">
+        <span>Комментарий врача</span>
+        <textarea id="reviewComment" rows="4" placeholder="Краткое пояснение правок или причины отклонения"></textarea>
+      </label>
+
+      <div class="technical-box">
+        <div><span>Pixel spacing X</span><strong>0,6 мм</strong></div>
+        <div><span>Pixel spacing Y</span><strong>1,05 мм</strong></div>
+        <div><span>Контур</span><strong id="roiPointCount">0 узлов</strong></div>
+        <div><span>DICOM</span><strong id="dicomSummary">-</strong></div>
+      </div>
+
+      <button class="btn primary full sticky-save" id="saveReview">Сохранить изменения</button>
+      <div id="saveStatus" class="save-status"></div>
+
+      <div class="section-head version-head">
+        <p>Версии контура</p>
+        <span>ИИ и ручные правки</span>
+      </div>
+      <div id="contourVersions" class="compact-list"></div>
+    </aside>
+  </section>
+</section>
+{% endblock %}

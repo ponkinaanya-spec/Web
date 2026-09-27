@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="workspace" data-page="home">
+  <aside class="archive-panel">
+    <div class="section-head">
+      <p>Сканирования</p>
+      <a href="/archive">Все записи</a>
+    </div>
+    <div id="homeArchive" class="archive-list compact-list"></div>
+  </aside>
+
+  <section class="work-area">
+    <header class="page-head">
+      <div>
+        <p class="eyebrow">Контроль качества денситометрии</p>
+        <h1>Загрузка исследований</h1>
+      </div>
+    </header>
+
+    <div class="upload-zone" id="dropZone">
+      <input id="fileInput" type="file" accept=".dcm,.dicom,.zip" multiple hidden>
+      <input id="folderInput" type="file" webkitdirectory directory multiple hidden>
+      <div class="upload-copy">
+        <h2>Добавьте DICOM, папку или ZIP</h2>
+        <p>Исследование может содержать до 3 изображений или серий.</p>
+      </div>
+      <div class="upload-actions">
+        <button class="btn primary" id="chooseFiles">Файлы</button>
+        <button class="btn ghost" id="chooseFolder">Папка</button>
+      </div>
+    </div>
+
+    <div class="two-column">
+      <section class="panel">
+        <div class="section-head">
+          <p>Очередь</p>
+          <span id="fileCounter">0 файлов</span>
+        </div>
+        <div id="fileList" class="file-list empty-state">Файлы пока не выбраны</div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <p>Параметры</p>
+          <span>DXA</span>
+        </div>
+        <dl class="params-list">
+          <div><dt>Формат входа</dt><dd>DICOM / ZIP</dd></div>
+          <div><dt>Анатомические области</dt><dd>Позвоночник, бедро</dd></div>
+          <div><dt>Пиксель, X</dt><dd>0,6 мм</dd></div>
+          <div><dt>Пиксель, Y</dt><dd>1,05 мм</dd></div>
+          <div><dt>Лимит обработки</dt><dd>до 3 минут</dd></div>
+        </dl>
+        <button class="btn primary full" id="submitFiles" disabled>Отправить на исследование</button>
+      </section>
+    </div>
+  </section>
+</section>
+{% endblock %}

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="work-area full" data-page="archive">
+  <header class="page-head">
+    <div>
+      <h1>Архив исследований</h1>
+    </div>
+    <a class="btn primary" href="/">Новая загрузка</a>
+  </header>
+
+  <section class="panel">
+    <div class="section-head">
+      <p>Группы</p>
+      <span id="archiveCounter">0 записей</span>
+    </div>
+    <div class="filter-bar" aria-label="Фильтры архива">
+      <label class="field-row compact-field search-field">
+        <span>Поиск</span>
+        <input id="archiveSearch" type="search" placeholder="Название файла или ZIP">
+      </label>
+      <label class="field-row compact-field">
+        <span>Дата от</span>
+        <input id="archiveDateFrom" type="date">
+      </label>
+      <label class="field-row compact-field">
+        <span>Дата до</span>
+        <input id="archiveDateTo" type="date">
+      </label>
+      <label class="field-row compact-field">
+        <span>Область</span>
+        <select id="archiveRegion">
+          <option value="all">Все области</option>
+          <option value="Поясничный отдел позвоночника">Позвоночник</option>
+          <option value="Проксимальный отдел бедра">Бедро</option>
+        </select>
+      </label>
+      <button class="btn ghost" id="archiveFilterReset" type="button">Сбросить</button>
+    </div>
+    <div id="archiveGroups" class="archive-groups"></div>
+  </section>
+
+</section>
+{% endblock %}

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="work-area full" data-page="study" data-study-id="{{ study_id }}">
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Результат анализа</p>
+      <h1 id="studyTitle">Исследование</h1>
+    </div>
+    <div class="toolbar">
+      <a class="btn ghost" href="/archive">Архив</a>
+      <a class="btn primary" id="studyEditTop" href="/editor/{{ study_id }}">Редактировать</a>
+    </div>
+  </header>
+
+  <section class="study-layout">
+    <section class="viewer-panel">
+      <div class="viewer-toolbar">
+        <div>
+          <strong id="studyFileName">Файл</strong>
+          <span id="studyContainer">-</span>
+        </div>
+        <span class="status-pill" id="studyProcessingStatus">-</span>
+      </div>
+      <canvas id="studyCanvas" width="980" height="700"></canvas>
+    </section>
+
+    <aside class="editor-side">
+      <div class="section-head">
+        <p>Выводы</p>
+        <span>по формату ТЗ</span>
+      </div>
+
+      <div class="conclusion-card" id="studyQualityCard">
+        <span>Класс качества</span>
+        <strong id="studyQualityClass">-</strong>
+      </div>
+
+      <dl class="params-list study-params">
+        <div><dt>Анатомическая область</dt><dd id="studyRegion">-</dd></div>
+        <div><dt>Сторона</dt><dd id="studyLaterality">-</dd></div>
+        <div><dt>Нарушения</dt><dd id="studyViolations">-</dd></div>
+        <div><dt>Вероятность</dt><dd id="studyProbability">-</dd></div>
+        <div><dt>Время обработки</dt><dd id="studyTime">-</dd></div>
+      </dl>
+
+      <label class="field-row">
+        <span>Комментарий врача</span>
+        <textarea id="studyComment" rows="4" readonly></textarea>
+      </label>
+
+      <a class="btn primary full" id="studyEditBottom" href="/editor/{{ study_id }}">Редактировать заключение и контур</a>
+    </aside>
+  </section>
+</section>
+{% endblock %}

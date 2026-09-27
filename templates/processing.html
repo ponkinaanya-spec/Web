@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="work-area full" data-page="processing" data-job-id="{{ job_id }}">
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Пакетная обработка</p>
+      <h1>Обработка исследований</h1>
+    </div>
+    <a class="btn ghost" href="/results/{{ job_id }}">Результаты</a>
+  </header>
+
+  <section class="panel progress-panel">
+    <div class="processing-topline">
+      <div>
+        <span class="muted">Всего файлов</span>
+        <strong id="totalFiles">0</strong>
+      </div>
+      <div>
+        <span class="muted">Обработано</span>
+        <strong id="processedFiles">0</strong>
+      </div>
+      <div>
+        <span class="muted">Текущий файл</span>
+        <strong id="currentFile">-</strong>
+      </div>
+    </div>
+    <div class="progress-track">
+      <div id="progressBar" class="progress-bar"></div>
+    </div>
+    <div class="progress-caption"><span id="progressValue">0</span>%</div>
+  </section>
+
+  <section class="processing-grid">
+    <div class="panel">
+      <div class="section-head">
+        <p>Этапы</p>
+        <span id="jobStatus">ожидание</span>
+      </div>
+      <ol class="stage-list" id="stageList">
+        <li>Чтение DICOM</li>
+        <li>Проверка метаданных</li>
+        <li>Определение анатомической области</li>
+        <li>Классификация качества</li>
+        <li>Определение нарушений</li>
+        <li>Формирование отчета</li>
+      </ol>
+    </div>
+    <div class="panel">
+      <div class="section-head">
+        <p>Файлы</p>
+        <span id="jobMessage">-</span>
+      </div>
+      <div id="processingFiles" class="file-list"></div>
+    </div>
+  </section>
+</section>
+{% endblock %}

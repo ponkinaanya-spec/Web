@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru" data-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ app_name }}</title>
+    <link rel="stylesheet" href="/static/styles.css?v=ui-clean-1">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="top-nav">
+        <a class="brand" href="/">
+          <span class="brand-mark"></span>
+          <span>{{ app_name }}</span>
+        </a>
+        <nav class="nav-links">
+          <a href="/" data-nav="home">Исследования</a>
+          <a href="/archive" data-nav="archive">Архив</a>
+        </nav>
+      </header>
+      <main class="page">
+        {% block content %}{% endblock %}
+      </main>
+      <div class="modal-backdrop" id="errorModal" hidden>
+        <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="errorTitle">
+          <div class="section-head">
+            <p id="errorTitle">Ошибка обработки</p>
+            <button class="btn ghost icon-btn" id="closeErrorModal" type="button" title="Закрыть">x</button>
+          </div>
+          <div id="errorBody" class="error-body"></div>
+          <button class="btn primary full" id="ackErrorModal" type="button">Понятно</button>
+        </section>
+      </div>
+    </div>
+    <script src="/static/app.js?v=ui-clean-1"></script>
+    {% block scripts %}{% endblock %}
+  </body>
+</html>
