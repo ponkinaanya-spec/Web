@@ -27,9 +27,11 @@ from .storage import (
     add_contour,
     add_study,
     create_job,
+    delete_contour,
     delete_job,
     export_selected_studies,
     export_results,
+    get_contour,
     get_job,
     get_study,
     init_db,
@@ -377,6 +379,21 @@ async def api_study_variant(study_id: str, variant: str):
     raise HTTPException(status_code=400, detail="Неизвестный вариант файла")
 
 
+@app.get("/api/studies/{study_id}/contours/{contour_id}/variant")
+async def api_study_contour_variant(study_id: str, contour_id: str):
+    study = get_study(study_id)
+    contour = get_contour(contour_id)
+    if not study or not contour or contour["study_id"] != study_id:
+        raise HTTPException(status_code=404, detail="Версия контура не найдена")
+    edited_path = create_markup_overlay(
+        study["source_path"],
+        study_id,
+        contour["payload"],
+        suffix=f"edited_{contour_id}",
+    )
+    return FileResponse(edited_path, media_type="image/png", filename=f"{study_id}_edited_{contour['version']}.png")
+
+
 @app.get("/api/studies/{study_id}/ai-contour")
 async def api_study_ai_contour(study_id: str):
     study = get_study(study_id)
@@ -418,6 +435,15 @@ async def api_save_contour(study_id: str, payload: dict):
     contour_id = add_contour(study_id, payload, source="manual")
     update_study(study_id, contour_path=contour_id)
     return {"ok": True, "contour_id": contour_id, "contours": list_contours(study_id)}
+
+
+@app.delete("/api/studies/{study_id}/contours/{contour_id}")
+async def api_delete_contour(study_id: str, contour_id: str):
+    contour = get_contour(contour_id)
+    if not contour or contour["study_id"] != study_id:
+        raise HTTPException(status_code=404, detail="Версия контура не найдена")
+    delete_contour(contour_id)
+    return {"ok": True, "contours": list_contours(study_id)}
 
 
 @app.get("/api/archive")

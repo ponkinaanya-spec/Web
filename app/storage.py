@@ -242,6 +242,27 @@ def list_contours(study_id: str) -> list[dict[str, Any]]:
     return contours
 
 
+def get_contour(contour_id: str) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM contours WHERE id = ?", (contour_id,)).fetchone()
+    if row is None:
+        return None
+    item = dict(row)
+    item["payload"] = json.loads(item.pop("payload_json") or "{}")
+    return item
+
+
+def delete_contour(contour_id: str) -> dict[str, Any] | None:
+    contour = get_contour(contour_id)
+    if contour is None:
+        return None
+    with connect() as conn:
+        conn.execute("DELETE FROM contours WHERE id = ?", (contour_id,))
+    remaining = list_contours(contour["study_id"])
+    update_study(contour["study_id"], contour_path=remaining[0]["id"] if remaining else None)
+    return contour
+
+
 def write_studies_report(studies: list[dict[str, Any]], output_path: Path, output_format: str) -> Path:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     columns = [

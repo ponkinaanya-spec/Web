@@ -443,14 +443,15 @@ function resultBadge(study) {
 }
 
 function previewCell(study) {
-  const overlayUrl = `/api/studies/${study.id}/overlay`;
+  const overlayUrl = study.contour_path ? `/api/studies/${study.id}/variant/edited` : `/api/studies/${study.id}/overlay`;
   const previewUrl = `/api/studies/${study.id}/preview`;
+  const overlayLabel = study.contour_path ? "Ручная" : "Overlay";
   return `
     <div class="preview-link">
-      <a href="${overlayUrl}" target="_blank" rel="noopener" title="Открыть overlay">
-        <img class="result-preview" src="${overlayUrl}" alt="DICOM overlay: ${escapeHtml(study.display_name)}" loading="lazy">
+      <a href="${overlayUrl}" target="_blank" rel="noopener" title="Открыть разметку">
+        <img class="result-preview" src="${overlayUrl}" alt="DICOM markup: ${escapeHtml(study.display_name)}" loading="lazy">
       </a>
-      <span><a href="${overlayUrl}" target="_blank" rel="noopener">Overlay</a> / <a href="${previewUrl}" target="_blank" rel="noopener">Исходник</a></span>
+      <span><a href="${overlayUrl}" target="_blank" rel="noopener">${overlayLabel}</a> / <a href="${previewUrl}" target="_blank" rel="noopener">Исходник</a></span>
     </div>`;
 }
 
@@ -1227,6 +1228,55 @@ function updateVariantLink(studyId) {
   link.href = `/api/studies/${studyId}/variant/${select.value}`;
 }
 
+function renderContourVersions(studyId, contours) {
+  const target = qs("#contourVersions");
+  if (!target) return;
+  if (!contours.length) {
+    target.innerHTML = `<div class="empty-state">Версий пока нет</div>`;
+    return;
+  }
+  target.innerHTML = contours.map((contour) => `
+    <div class="archive-item plain contour-version-item">
+      <div>
+        <strong>Версия ${contour.version}</strong>
+        <div class="file-meta">
+          <span>${escapeHtml(contour.source)}</span>
+          <span>${new Date(contour.created_at).toLocaleString("ru-RU")}</span>
+        </div>
+      </div>
+      <div class="toolbar compact">
+        <button class="btn ghost small-btn contour-load" type="button" data-contour-id="${contour.id}">Выбрать</button>
+        <button class="btn ghost small-btn contour-delete" type="button" data-contour-id="${contour.id}">Удалить</button>
+      </div>
+    </div>`).join("");
+  qsa(".contour-load", target).forEach((button) => {
+    button.addEventListener("click", () => {
+      const contour = contours.find((item) => item.id === button.dataset.contourId);
+      if (!contour) return;
+      pushUndoSnapshot();
+      state.contour = cloneContour(contour.payload);
+      state.initialContour = cloneContour(contour.payload);
+      state.selectedObjectIndex = 0;
+      state.selectedPointIndex = null;
+      state.activeStroke = null;
+      state.stickStroke = null;
+      renderObjectSelect();
+      drawContour();
+      updateVariantLink(studyId);
+      const saveStatus = qs("#saveStatus");
+      if (saveStatus) saveStatus.textContent = `Открыта версия ${contour.version}`;
+    });
+  });
+  qsa(".contour-delete", target).forEach((button) => {
+    button.addEventListener("click", async () => {
+      const response = await getJson(`/api/studies/${studyId}/contours/${button.dataset.contourId}`, { method: "DELETE" });
+      renderContourVersions(studyId, response.contours || []);
+      const saveStatus = qs("#saveStatus");
+      if (saveStatus) saveStatus.textContent = "Версия удалена";
+    });
+  });
+}
+
 function currentBrushPoint(event) {
   const point = canvasPoint(event);
   return {
@@ -1331,6 +1381,7 @@ async function setupStudyPage() {
   const imageLink = qs("#studyImageLink");
   const showOverlay = qs("#showOverlay");
   const showPreview = qs("#showPreview");
+  const showEdited = qs("#showEdited");
   if (!root || !image || !imageLink) return;
   const data = await getJson(`/api/studies/${root.dataset.studyId}`);
   const study = data.study;
@@ -1344,15 +1395,20 @@ async function setupStudyPage() {
   qs("#studyTime").textContent = study.time_of_processing ? `${study.time_of_processing} c` : "-";
   const overlayUrl = `/api/studies/${study.id}/overlay`;
   const previewUrl = `/api/studies/${study.id}/preview`;
+  const editedUrl = `/api/studies/${study.id}/variant/edited`;
+  const hasEdited = data.contours.length > 0;
+  if (showEdited) showEdited.hidden = !hasEdited;
   const setStudyImage = (url, mode) => {
     image.src = url;
     imageLink.href = url;
     showOverlay?.classList.toggle("active", mode === "overlay");
     showPreview?.classList.toggle("active", mode === "preview");
+    showEdited?.classList.toggle("active", mode === "edited");
   };
-  setStudyImage(overlayUrl, "overlay");
+  setStudyImage(hasEdited ? editedUrl : overlayUrl, hasEdited ? "edited" : "overlay");
   showOverlay?.addEventListener("click", () => setStudyImage(overlayUrl, "overlay"));
   showPreview?.addEventListener("click", () => setStudyImage(previewUrl, "preview"));
+  showEdited?.addEventListener("click", () => setStudyImage(editedUrl, "edited"));
 }
 
 async function setupEditor() {
@@ -1383,13 +1439,7 @@ async function setupEditor() {
   ].filter(Boolean).join(" / ") || "демо";
   renderViolationChecklist(study.violation_type || "");
   updateLateralityField();
-  qs("#contourVersions").innerHTML = data.contours.length
-    ? data.contours.map((contour) => `
-      <div class="archive-item">
-        <strong>Версия ${contour.version}</strong>
-        <div class="file-meta"><span>${contour.source}</span><span>${new Date(contour.created_at).toLocaleString("ru-RU")}</span></div>
-      </div>`).join("")
-    : `<div class="empty-state">Версий пока нет</div>`;
+  renderContourVersions(study.id, data.contours);
   renderObjectSelect();
   await loadCanvasImage(`/api/studies/${study.id}/editor-image`, canvas)
     .catch(() => loadCanvasImage(`/api/studies/${study.id}/preview`, canvas))
@@ -1580,12 +1630,13 @@ async function setupEditor() {
         },
       }),
     });
-    await getJson(`/api/studies/${root.dataset.studyId}/contours`, {
+    const contourResponse = await getJson(`/api/studies/${root.dataset.studyId}/contours`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(state.contour),
     });
     state.initialContour = cloneContour(state.contour);
+    renderContourVersions(root.dataset.studyId, contourResponse.contours || []);
     qs("#variantSelect").value = "edited";
     updateVariantLink(root.dataset.studyId);
     if (saveStatus) saveStatus.textContent = "Изменения сохранены";
