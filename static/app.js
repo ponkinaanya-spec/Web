@@ -115,14 +115,27 @@ function clamp(value, min, max) {
 }
 
 function validateInputFile(file) {
-  const name = (file.webkitRelativePath || file.name || "").toLowerCase();
+  const displayName = file.relativePath || file.webkitRelativePath || file.name || "";
+  const name = displayName.toLowerCase();
   const extension = name.includes(".") ? name.slice(name.lastIndexOf(".")) : "";
-  const allowed = [".dcm", ".dicom", ".zip", ""];
+  const allowed = [".dcm", ".dicom", ".zip"];
   if (allowed.includes(extension)) return null;
   return {
-    file: file.webkitRelativePath || file.name || "Файл",
+    file: displayName || "Файл",
     reason: "Неправильный формат файла. Загрузите DICOM-файл, папку с DICOM или ZIP-архив.",
   };
+}
+
+function showQueueRejected(errors) {
+  showUploadErrorModal({
+    message: "Файлы не добавлены в очередь",
+    payload: {
+      detail: {
+        message: "Файлы не добавлены в очередь",
+        errors,
+      },
+    },
+  });
 }
 
 function addFilesToQueue(files) {
@@ -135,20 +148,76 @@ function addFilesToQueue(files) {
     else accepted.push(file);
   });
   if (errors.length) {
-    showUploadErrorModal({
-      message: "Файлы не добавлены в очередь",
-      payload: {
-        detail: {
-          message: "Файлы не добавлены в очередь",
-          errors,
-        },
-      },
-    });
+    showQueueRejected(errors);
     return;
   }
   if (accepted.length) {
     state.selectedFiles = [...state.selectedFiles, ...accepted];
     renderFileList();
+  }
+}
+
+function readDirectoryEntries(reader) {
+  return new Promise((resolve, reject) => {
+    reader.readEntries(resolve, reject);
+  });
+}
+
+function entryFile(entry) {
+  return new Promise((resolve, reject) => {
+    entry.file(resolve, reject);
+  });
+}
+
+async function collectDroppedEntryFiles(entry, prefix = "") {
+  if (!entry) return [];
+  if (entry.isFile) {
+    const file = await entryFile(entry);
+    Object.defineProperty(file, "relativePath", {
+      value: `${prefix}${file.name}`,
+      configurable: true,
+    });
+    return [file];
+  }
+  if (!entry.isDirectory) return [];
+  const reader = entry.createReader();
+  const files = [];
+  let batch = await readDirectoryEntries(reader);
+  while (batch.length) {
+    for (const child of batch) {
+      files.push(...(await collectDroppedEntryFiles(child, `${prefix}${entry.name}/`)));
+    }
+    batch = await readDirectoryEntries(reader);
+  }
+  return files;
+}
+
+async function addDroppedItemsToQueue(dataTransfer) {
+  const items = Array.from(dataTransfer.items || []);
+  if (!items.length) {
+    addFilesToQueue(dataTransfer.files);
+    return;
+  }
+  try {
+    const files = [];
+    for (const item of items) {
+      const entry = item.webkitGetAsEntry?.();
+      if (entry) files.push(...(await collectDroppedEntryFiles(entry)));
+      else if (item.kind === "file") files.push(item.getAsFile());
+    }
+    const realFiles = files.filter(Boolean);
+    if (!realFiles.length) {
+      showQueueRejected([{ file: "Папка", reason: "В папке нет файлов, подходящих для обработки." }]);
+      return;
+    }
+    addFilesToQueue(realFiles);
+  } catch {
+    showQueueRejected([
+      {
+        file: "Папка",
+        reason: "Не удалось прочитать папку. Выберите DICOM-файл, папку с DICOM или ZIP-архив.",
+      },
+    ]);
   }
 }
 
@@ -172,7 +241,7 @@ function renderFileList() {
   list.className = "file-list";
   list.innerHTML = state.selectedFiles
     .map((file, index) => {
-      const name = file.webkitRelativePath || file.name;
+      const name = file.relativePath || file.webkitRelativePath || file.name;
       const type = file.name.toLowerCase().endsWith(".zip") ? "ZIP" : "DICOM";
       return `
         <div class="file-item">
@@ -223,7 +292,7 @@ function setupHome() {
     });
   });
   dropZone.addEventListener("drop", (event) => {
-    addFilesToQueue(event.dataTransfer.files);
+    addDroppedItemsToQueue(event.dataTransfer);
   });
 
   submit.addEventListener("click", async () => {
@@ -231,7 +300,7 @@ function setupHome() {
     submit.textContent = "Загрузка...";
     const form = new FormData();
     state.selectedFiles.forEach((file) => {
-      form.append("files", file, file.webkitRelativePath || file.name);
+      form.append("files", file, file.relativePath || file.webkitRelativePath || file.name);
     });
     try {
       const data = await getJson("/api/uploads", { method: "POST", body: form });
