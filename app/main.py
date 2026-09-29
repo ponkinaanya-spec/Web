@@ -93,6 +93,16 @@ def read_ml_result_for_study(study: dict) -> dict | None:
         return None
 
 
+def upload_rejected_error(errors: list[dict[str, str]]) -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail={
+            "message": "Файлы не добавлены в очередь",
+            "errors": errors,
+        },
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return render(request, "home.html")
@@ -234,23 +244,13 @@ async def upload_studies(background_tasks: BackgroundTasks, files: list[UploadFi
     if upload_errors:
         shutil.rmtree(job_dir, ignore_errors=True)
         delete_job(job_id)
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "message": "Файлы не отправлены на исследование",
-                "errors": upload_errors,
-            },
-        )
+        raise upload_rejected_error(upload_errors)
 
     if accepted_files == 0:
         shutil.rmtree(job_dir, ignore_errors=True)
         delete_job(job_id)
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "message": "Файлы не отправлены на исследование",
-                "errors": [{"file": "Загрузка", "reason": "Нет файлов, подходящих для обработки"}],
-            },
+        raise upload_rejected_error(
+            [{"file": "Загрузка", "reason": "Нет файлов, подходящих для обработки"}]
         )
 
     update_job(job_id, total_files=accepted_files)
