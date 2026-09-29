@@ -1,11 +1,28 @@
 const state = {
   selectedFiles: [],
   archiveStudies: [],
+  archiveFilteredStudies: [],
+  archiveSelected: new Set(),
   collapsedGroups: new Set(),
   expandedGroups: new Set(),
   contour: null,
+  initialContour: null,
   currentStudy: null,
-  view: { zoom: 1, panX: 0, panY: 0 },
+  editorImage: null,
+  undoStack: [],
+  redoStack: [],
+  maxHistory: 80,
+  selectedObjectIndex: 0,
+  selectedPointIndex: null,
+  insertPointMode: false,
+  editTool: "brush",
+  brushSize: 2,
+  eraserSize: 12,
+  brushShape: "circle",
+  activeStroke: null,
+  stickStroke: null,
+  showMachineOverlay: true,
+  view: { zoom: 1, panX: 0, panY: 0, fitZoom: 1 },
   draggingPoint: null,
   isPanning: false,
   lastPointer: null,
@@ -117,21 +134,27 @@ function addFilesToQueue(files) {
     if (error) errors.push(error);
     else accepted.push(file);
   });
-  if (accepted.length) {
-    state.selectedFiles = [...state.selectedFiles, ...accepted];
-    renderFileList();
-  }
   if (errors.length) {
     showUploadErrorModal({
       message: "Файлы не добавлены в очередь",
       payload: {
         detail: {
-          message: "Часть файлов не подходит для исследования",
+          message: "Файлы не добавлены в очередь",
           errors,
         },
       },
     });
+    return;
   }
+  if (accepted.length) {
+    state.selectedFiles = [...state.selectedFiles, ...accepted];
+    renderFileList();
+  }
+}
+
+function removeFileFromQueue(index) {
+  state.selectedFiles.splice(index, 1);
+  renderFileList();
 }
 
 function renderFileList() {
@@ -148,16 +171,24 @@ function renderFileList() {
   }
   list.className = "file-list";
   list.innerHTML = state.selectedFiles
-    .map((file) => {
+    .map((file, index) => {
       const name = file.webkitRelativePath || file.name;
       const type = file.name.toLowerCase().endsWith(".zip") ? "ZIP" : "DICOM";
       return `
         <div class="file-item">
-          <strong>${escapeHtml(name)}</strong>
-          <div class="file-meta"><span>${type}</span><span>${formatBytes(file.size)}</span></div>
+          <div class="file-row-main">
+            <strong>${escapeHtml(name)}</strong>
+            <div class="file-meta"><span>${type}</span><span>${formatBytes(file.size)}</span></div>
+          </div>
+          <button class="btn ghost icon-btn queue-remove" type="button" data-file-index="${index}" aria-label="Удалить ${escapeHtml(name)}" title="Удалить из очереди">×</button>
         </div>`;
     })
     .join("");
+  qsa(".queue-remove", list).forEach((button) => {
+    button.addEventListener("click", () => {
+      removeFileFromQueue(Number(button.dataset.fileIndex));
+    });
+  });
 }
 
 function setupHome() {
@@ -222,28 +253,29 @@ async function loadHomeArchive() {
   const studies = Object.values(data.groups).flat().slice(0, 8);
   state.archiveStudies = studies;
   target.innerHTML = studies.length
-    ? studies.map(renderArchiveItem).join("")
+    ? studies.map((study) => renderArchiveItem(study, { selectable: false })).join("")
     : `<div class="empty-state">Архив пока пуст</div>`;
   bindErrorButtons(target);
 }
 
-function renderArchiveItem(study) {
-  const date = new Date(study.created_at).toLocaleString("ru-RU");
-  const type = typeLabel(study);
+function renderArchiveItem(study, options = {}) {
+  const selectable = options.selectable !== false;
   const status = statusLabel(study);
-  const region = study.anatomical_region || "область не определена";
-  const laterality = studyLaterality(study);
   const hasError = status === "Failure" || study.status === "failed" || study.metadata?.error_message;
+  const fields = [
+    ["Область", study.anatomical_region || "-"],
+    ["Сторона", studyLaterality(study) || "-"],
+    ["Класс", qualitySummary(study)],
+    ["Нарушения", study.violation_type || "-"],
+    ["Время", study.time_of_processing ? `${study.time_of_processing} c` : "-"],
+  ];
   return `
-    <div class="archive-item ${hasError ? "has-error" : ""}">
+    <div class="archive-item ${selectable ? "selectable" : "plain"} ${hasError ? "has-error" : ""}">
+      ${selectable ? `<input class="archive-file-check" type="checkbox" data-study-id="${study.id}" ${state.archiveSelected.has(study.id) ? "checked" : ""} aria-label="Выбрать ${escapeHtml(study.display_name)}">` : ""}
       <a class="archive-link" href="/study/${study.id}">
         <strong>${escapeHtml(study.display_name)}</strong>
-        <div class="file-meta">
-          <span>${date}</span>
-          <span>${type}</span>
-          <span>${escapeHtml(status)}</span>
-          <span>${escapeHtml(region)}</span>
-          ${laterality ? `<span>${escapeHtml(laterality)}</span>` : ""}
+        <div class="archive-result-meta">
+          ${fields.map(([label, value]) => `<span><b>${label}</b>${escapeHtml(value)}</span>`).join("")}
         </div>
       </a>
       ${hasError ? `<button class="btn ghost small-btn error-open" type="button" data-study-id="${study.id}">Что случилось</button>` : ""}
@@ -268,10 +300,10 @@ function buildErrorDetails(study) {
     metadata.error_message ||
     metadata.validation_message ||
     study.violation_type ||
-    "Файл не обработан. В отчете для этой строки будет указан processing_status = Failure.";
+    "Файл не удалось обработать.";
   const recommendations = {
-    not_dicom: "Проверьте, что загружен исходный DICOM-файл, а не изображение, PDF или служебный файл архива.",
-    unsupported_dicom: "Проверьте, что исследование относится к позвоночнику или проксимальному отделу бедра.",
+    not_dicom: "Вы прикрепили файл другого формата. Загрузите DICOM-файл, папку с DICOM или ZIP-архив с DICOM-файлами.",
+    unsupported_dicom: "Файл открылся, но не похож на DICOM-исследование позвоночника или проксимального отдела бедра.",
     low_quality_preview: "Проверьте качество снимка и при необходимости повторите экспорт или сканирование.",
   };
   return {
@@ -295,7 +327,6 @@ function showErrorModal(study) {
     </div>
     <dl class="params-list">
       <div><dt>Причина</dt><dd>${escapeHtml(details.reason)}</dd></div>
-      <div><dt>Запись в отчете</dt><dd>processing_status = Failure</dd></div>
       <div><dt>Что проверить</dt><dd>${escapeHtml(details.recommendation)}</dd></div>
     </dl>`;
   modal.hidden = false;
@@ -329,7 +360,7 @@ function showUploadErrorModal(error) {
               .map((item) => `
                 <div class="error-list-item">
                   <strong>${escapeHtml(item.file || "Файл")}</strong>
-                  <span>${escapeHtml(item.reason || "Файл не открывается или не разбирается как DICOM")}</span>
+                  <span>${escapeHtml(item.reason || "Вы прикрепили файл другого формата. Загрузите DICOM-файл.")}</span>
                 </div>`)
               .join("")
           : `<div class="error-list-item"><span>${escapeHtml(error.message)}</span></div>`
@@ -399,10 +430,37 @@ async function pollProcessing() {
   }
 }
 
-function resultBadge(value) {
-  if (value === 1) return `<span class="badge bad">нарушение</span>`;
-  if (value === 0) return `<span class="badge ok">качество</span>`;
+function effectiveQualityClass(study) {
+  if ((study.violation_type || "").trim()) return 1;
+  return study.quality_class;
+}
+
+function resultBadge(study) {
+  const value = effectiveQualityClass(study);
+  if (value === 1) return `<span class="badge bad">некорректно</span>`;
+  if (value === 0) return `<span class="badge ok">корректно</span>`;
   return `<span class="badge warn">ошибка</span>`;
+}
+
+function previewCell(study) {
+  const overlayUrl = `/api/studies/${study.id}/overlay`;
+  const previewUrl = `/api/studies/${study.id}/preview`;
+  return `
+    <div class="preview-link">
+      <a href="${overlayUrl}" target="_blank" rel="noopener" title="Открыть overlay">
+        <img class="result-preview" src="${overlayUrl}" alt="DICOM overlay: ${escapeHtml(study.display_name)}" loading="lazy">
+      </a>
+      <span><a href="${overlayUrl}" target="_blank" rel="noopener">Overlay</a> / <a href="${previewUrl}" target="_blank" rel="noopener">Исходник</a></span>
+    </div>`;
+}
+
+function resultFileCell(study) {
+  return `
+    <div class="result-file-cell">
+      <strong>${escapeHtml(study.display_name)}</strong>
+      <span>${escapeHtml(study.metadata?.study_uid || "Study UID: -")}</span>
+      <span>${escapeHtml(study.metadata?.image_uid || "Image UID: -")}</span>
+    </div>`;
 }
 
 async function loadResults() {
@@ -411,7 +469,7 @@ async function loadResults() {
   const data = await getJson(`/api/jobs/${root.dataset.jobId}`);
   const studies = data.studies;
   state.archiveStudies = studies;
-  const bad = studies.filter((study) => study.quality_class === 1).length;
+  const bad = studies.filter((study) => effectiveQualityClass(study) === 1).length;
   const success = studies.filter((study) => study.processing_status === "Success").length;
   const times = studies.map((study) => Number(study.time_of_processing || 0)).filter(Boolean);
   const avgTime = times.length ? times.reduce((sum, value) => sum + value, 0) / times.length : 0;
@@ -422,11 +480,11 @@ async function loadResults() {
   qs("#resultsTable").innerHTML = studies
     .map((study) => `
       <tr>
-        <td>${escapeHtml(study.display_name)}</td>
+        <td>${previewCell(study)}</td>
+        <td>${resultFileCell(study)}</td>
         <td>${escapeHtml(study.anatomical_region || "-")}</td>
         <td>${escapeHtml(studyLaterality(study) || "-")}</td>
-        <td>${resultBadge(study.quality_class)}</td>
-        <td>${study.quality_prob ?? "-"}</td>
+        <td>${resultBadge(study)}</td>
         <td>${escapeHtml(study.violation_type || "-")}</td>
         <td>${study.time_of_processing ? `${study.time_of_processing} c` : "-"}</td>
         <td>
@@ -446,19 +504,20 @@ async function loadArchive() {
   const data = await getJson("/api/archive");
   state.archiveStudies = Object.values(data.groups).flat().filter(isArchiveReady);
   const filters = readArchiveFilters();
-  const filteredGroups = Object.fromEntries(
-    Object.entries(data.groups)
-      .map(([group, studies]) => [group, studies.filter((study) => isArchiveReady(study) && archiveMatches(study, filters))])
-      .filter(([, studies]) => studies.length),
-  );
-  const total = Object.values(filteredGroups).flat().length;
+  state.archiveFilteredStudies = state.archiveStudies.filter((study) => archiveMatches(study, filters));
+  const visibleIds = new Set(state.archiveFilteredStudies.map((study) => study.id));
+  state.archiveSelected = new Set([...state.archiveSelected].filter((id) => visibleIds.has(id)));
+  const groupedByDate = groupArchiveByDate(state.archiveFilteredStudies);
+  const total = state.archiveFilteredStudies.length;
   const allTotal = state.archiveStudies.length;
   qs("#archiveCounter").textContent = `${total} из ${allTotal} записей`;
-  qs("#archiveGroups").innerHTML = Object.entries(filteredGroups)
-    .map(([group, studies]) => renderArchiveGroup(group, studies))
+  qs("#archiveGroups").innerHTML = Object.entries(groupedByDate)
+    .map(([dateKey, studies]) => renderArchiveDateGroup(dateKey, studies))
     .join("") || `<div class="empty-state">Архив пока пуст</div>`;
   bindArchiveGroupToggles();
+  bindArchiveSelection();
   bindErrorButtons(qs("#archiveGroups"));
+  updateArchiveSelectionUi();
 }
 
 function readArchiveFilters() {
@@ -505,26 +564,72 @@ function archiveGroupKey(group) {
   return encodeURIComponent(group);
 }
 
-function renderArchiveGroup(group, studies) {
-  const isLoose = group === "Отдельные файлы";
-  const key = archiveGroupKey(group);
+function archiveDateKey(study) {
+  return new Date(study.created_at).toISOString().slice(0, 10);
+}
+
+function archiveDateLabel(dateKey) {
+  return new Date(`${dateKey}T00:00:00`).toLocaleDateString("ru-RU", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function groupArchiveByDate(studies) {
+  return studies.reduce((acc, study) => {
+    const key = archiveDateKey(study);
+    acc[key] = acc[key] || [];
+    acc[key].push(study);
+    return acc;
+  }, {});
+}
+
+function groupArchiveByFolder(studies) {
+  return studies.reduce((acc, study) => {
+    const key = study.group_name || "Отдельные файлы";
+    acc[key] = acc[key] || [];
+    acc[key].push(study);
+    return acc;
+  }, {});
+}
+
+function everySelected(studies) {
+  return studies.length > 0 && studies.every((study) => state.archiveSelected.has(study.id));
+}
+
+function renderArchiveDateGroup(dateKey, studies) {
+  const checked = everySelected(studies) ? "checked" : "";
+  const groups = groupArchiveByFolder(studies);
+  return `
+    <section class="archive-date-group" data-date-key="${dateKey}">
+      <label class="archive-date-head">
+        <input class="archive-date-check" type="checkbox" data-date-key="${dateKey}" ${checked}>
+        <strong>${escapeHtml(archiveDateLabel(dateKey))}</strong>
+        <span>${studies.length} файлов</span>
+      </label>
+      <div class="archive-date-children">
+        ${Object.entries(groups).map(([group, groupStudies]) => renderArchiveGroup(dateKey, group, groupStudies)).join("")}
+      </div>
+    </section>`;
+}
+
+function renderArchiveGroup(dateKey, group, studies) {
+  const key = `${dateKey}:${archiveGroupKey(group)}`;
   const collapsed = !state.expandedGroups.has(key);
-  if (isLoose) {
-    return `
-      <section class="archive-group loose-files">
-        <h2>${archiveGroupTitle(group)}</h2>
-        <div class="archive-children">
-          ${studies.map(renderArchiveItem).join("")}
-        </div>
-      </section>`;
-  }
+  const checked = everySelected(studies) ? "checked" : "";
   return `
     <section class="archive-group nested-files ${collapsed ? "collapsed" : ""}" data-group-key="${key}">
-      <button class="archive-folder-toggle" type="button" data-group-key="${key}" aria-expanded="${collapsed ? "false" : "true"}">
-        <span class="folder-caret">${collapsed ? "+" : "-"}</span>
-        <strong>${archiveGroupTitle(group)}</strong>
-        <span>${studies.length} файлов</span>
-      </button>
+      <div class="archive-folder-row">
+        <label class="archive-folder-select">
+          <input class="archive-group-check" type="checkbox" data-group-key="${key}" ${checked}>
+          <strong>${archiveGroupTitle(group)}</strong>
+        </label>
+        <button class="archive-folder-toggle" type="button" data-group-key="${key}" aria-expanded="${collapsed ? "false" : "true"}">
+          <span class="folder-caret">${collapsed ? "+" : "-"}</span>
+          <span>${studies.length} файлов</span>
+        </button>
+      </div>
       <div class="archive-children" ${collapsed ? "hidden" : ""}>
         ${studies.map(renderArchiveItem).join("")}
       </div>
@@ -550,6 +655,89 @@ function bindArchiveGroupToggles() {
   });
 }
 
+function setArchiveSelection(studies, checked) {
+  studies.forEach((study) => {
+    if (checked) state.archiveSelected.add(study.id);
+    else state.archiveSelected.delete(study.id);
+  });
+  updateArchiveSelectionUi();
+  qsa(".archive-file-check").forEach((input) => {
+    input.checked = state.archiveSelected.has(input.dataset.studyId);
+  });
+  qsa(".archive-date-check").forEach((input) => {
+    const studiesForDate = state.archiveFilteredStudies.filter((study) => archiveDateKey(study) === input.dataset.dateKey);
+    input.checked = everySelected(studiesForDate);
+  });
+  qsa(".archive-group-check").forEach((input) => {
+    const group = input.closest(".archive-group");
+    const ids = qsa(".archive-file-check", group).map((item) => item.dataset.studyId);
+    input.checked = ids.length > 0 && ids.every((id) => state.archiveSelected.has(id));
+  });
+}
+
+function bindArchiveSelection() {
+  qsa(".archive-file-check").forEach((input) => {
+    input.addEventListener("click", (event) => event.stopPropagation());
+    input.addEventListener("change", () => {
+      if (input.checked) state.archiveSelected.add(input.dataset.studyId);
+      else state.archiveSelected.delete(input.dataset.studyId);
+      updateArchiveSelectionUi();
+    });
+  });
+  qsa(".archive-date-check").forEach((input) => {
+    input.addEventListener("change", () => {
+      const studies = state.archiveFilteredStudies.filter((study) => archiveDateKey(study) === input.dataset.dateKey);
+      setArchiveSelection(studies, input.checked);
+    });
+  });
+  qsa(".archive-group-check").forEach((input) => {
+    input.addEventListener("change", () => {
+      const group = input.closest(".archive-group");
+      const ids = qsa(".archive-file-check", group).map((item) => item.dataset.studyId);
+      const studies = state.archiveFilteredStudies.filter((study) => ids.includes(study.id));
+      setArchiveSelection(studies, input.checked);
+    });
+  });
+}
+
+function updateArchiveSelectionUi() {
+  const count = state.archiveSelected.size;
+  const counter = qs("#archiveSelectedCounter");
+  const download = qs("#archiveDownload");
+  const selectAll = qs("#archiveSelectAll");
+  if (counter) counter.textContent = `${count} выбрано`;
+  if (download) download.disabled = count === 0;
+  if (selectAll) {
+    const allVisibleSelected = state.archiveFilteredStudies.length > 0 && state.archiveFilteredStudies.every((study) => state.archiveSelected.has(study.id));
+    selectAll.textContent = allVisibleSelected ? "Снять выбор" : "Выбрать все";
+  }
+}
+
+async function downloadArchiveSelection() {
+  const format = qs("#archiveExportFormat")?.value || "csv";
+  const ids = [...state.archiveSelected];
+  if (!ids.length) return;
+  const response = await fetch(`/api/archive/export/${format}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ study_ids: ids }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    alert(body.detail || "Не удалось скачать отчет");
+    return;
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `archive-selected.${format}`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function setupArchiveFilters() {
   const root = qs("[data-page='archive']");
   if (!root) return;
@@ -566,6 +754,11 @@ function setupArchiveFilters() {
     if (region) region.value = "all";
     loadArchive();
   });
+  qs("#archiveSelectAll")?.addEventListener("click", () => {
+    const allVisibleSelected = state.archiveFilteredStudies.length > 0 && state.archiveFilteredStudies.every((study) => state.archiveSelected.has(study.id));
+    setArchiveSelection(state.archiveFilteredStudies, !allVisibleSelected);
+  });
+  qs("#archiveDownload")?.addEventListener("click", downloadArchiveSelection);
 }
 
 function setupErrorModal() {
@@ -594,102 +787,233 @@ function drawDxaScene(canvas, contour, study, view = { zoom: 1, panX: 0, panY: 0
   ctx.fillStyle = "black";
   ctx.fillRect(0, 0, width, height);
 
-  const region = contour.region || study?.anatomical_region || "";
-  ctx.save();
-  ctx.translate(width / 2, height / 2);
-  ctx.filter = "blur(10px)";
-  if (region.includes("Пояснич")) {
-    for (let i = -3; i <= 3; i += 1) {
-      const shade = windowPixel(178 + Math.abs(i) * 8, filter);
-      ctx.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
-      ctx.beginPath();
-      ctx.roundRect(-74, i * 58 - 23, 148, 46, 10);
-      ctx.fill();
+  if (state.editorImage) {
+    ctx.filter = `brightness(${filter.brightness}) contrast(${filter.contrast})`;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(state.editorImage, 0, 0, width, height);
+    ctx.filter = "none";
+  }
+
+  const machineLayer = document.createElement("canvas");
+  machineLayer.width = width;
+  machineLayer.height = height;
+  const machineCtx = machineLayer.getContext("2d");
+  if (state.showMachineOverlay) (contour.objects || []).forEach((object) => {
+    const points = object.points || [];
+    if (!points.length) return;
+    if (object.type === "points") {
+      const radius = object.radius_ratio ? Number(object.radius_ratio) * height : 2;
+      machineCtx.save();
+      machineCtx.fillStyle = object.color || "#50ff50";
+      points.forEach((point) => {
+        machineCtx.beginPath();
+        machineCtx.arc(point.x * width, point.y * height, radius, 0, Math.PI * 2);
+        machineCtx.fill();
+      });
+      machineCtx.restore();
+      return;
     }
-    ctx.filter = "blur(14px)";
-    ctx.fillStyle = `rgb(${windowPixel(135, filter)}, ${windowPixel(135, filter)}, ${windowPixel(135, filter)})`;
-    ctx.beginPath();
-    ctx.ellipse(-122, 214, 90, 42, -0.2, 0, Math.PI * 2);
-    ctx.ellipse(122, 214, 90, 42, 0.2, 0, Math.PI * 2);
-    ctx.fill();
-  } else {
-    ctx.filter = "blur(13px)";
-    ctx.fillStyle = `rgb(${windowPixel(174, filter)}, ${windowPixel(174, filter)}, ${windowPixel(174, filter)})`;
-    ctx.beginPath();
-    ctx.ellipse(-190, -210, 118, 95, 0.12, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = `rgb(${windowPixel(205, filter)}, ${windowPixel(205, filter)}, ${windowPixel(205, filter)})`;
-    ctx.beginPath();
-    ctx.ellipse(-78, -242, 90, 72, 0.1, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = `rgb(${windowPixel(150, filter)}, ${windowPixel(150, filter)}, ${windowPixel(150, filter)})`;
-    ctx.beginPath();
-    ctx.roundRect(-208, -160, 142, 420, 70);
-    ctx.fill();
-    ctx.fillStyle = `rgb(${windowPixel(110, filter)}, ${windowPixel(110, filter)}, ${windowPixel(110, filter)})`;
-    ctx.beginPath();
-    ctx.ellipse(-30, -34, 210, 88, -0.42, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
-  ctx.filter = "none";
-
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.06)";
-  for (let y = 0; y < height; y += 5) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(width, y);
-    ctx.stroke();
-  }
-
-  const points = contour.objects[0].points;
-  ctx.beginPath();
-  points.forEach((point, index) => {
-    const x = point.x * width;
-    const y = point.y * height;
-    if (index === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.strokeStyle = "#fff200";
-  ctx.lineWidth = 5;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.shadowColor = "rgba(0, 0, 0, 0.7)";
-  ctx.shadowBlur = 5;
-  ctx.stroke();
-  ctx.shadowBlur = 0;
-
-  if (showNodes) {
-    points.forEach((point) => {
-      ctx.beginPath();
-      ctx.arc(point.x * width, point.y * height, 5, 0, Math.PI * 2);
-      ctx.fillStyle = "#fff200";
-      ctx.fill();
-      ctx.strokeStyle = "#061823";
-      ctx.lineWidth = 2;
-      ctx.stroke();
+    machineCtx.beginPath();
+    points.forEach((point, index) => {
+      const x = point.x * width;
+      const y = point.y * height;
+      if (index === 0) machineCtx.moveTo(x, y);
+      else machineCtx.lineTo(x, y);
     });
-  }
+    if (object.type === "polygon" && points.length > 2) machineCtx.closePath();
+    machineCtx.strokeStyle = object.color || "#fff200";
+    machineCtx.lineWidth = object.line_width_ratio ? Number(object.line_width_ratio) * height : 1.25;
+    machineCtx.lineCap = "round";
+    machineCtx.lineJoin = "round";
+    machineCtx.shadowColor = "rgba(0, 0, 0, 0.72)";
+    machineCtx.shadowBlur = 5;
+    machineCtx.stroke();
+    machineCtx.shadowBlur = 0;
+  });
+  if (state.showMachineOverlay) (contour.markers || []).forEach((marker) => drawMarker(machineCtx, marker, width, height));
+  (contour.machine_eraser_strokes || []).forEach((stroke) => drawBrushStroke(machineCtx, stroke, width, height));
+  ctx.drawImage(machineLayer, 0, 0);
 
-  (contour.markers || []).forEach((marker) => drawMarker(ctx, marker, width, height));
+  drawBrushLayer(ctx, contour.brush_strokes || [], width, height);
   ctx.restore();
 }
 
-function drawContour() {
-  const canvas = qs("#contourCanvas");
-  if (!canvas || !state.contour) return;
-  drawDxaScene(canvas, state.contour, state.currentStudy, state.view, true);
+function drawBrushDab(ctx, point, size, shape, width, height) {
+  const x = point.x * width;
+  const y = point.y * height;
+  if (shape === "square") {
+    ctx.fillRect(x - size / 2, y - size / 2, size, size);
+    return;
+  }
+  ctx.beginPath();
+  ctx.arc(x, y, size / 2, 0, Math.PI * 2);
+  ctx.fill();
+}
 
-  const points = state.contour.objects[0].points;
-  const pointCounter = qs("#roiPointCount");
-  if (pointCounter) pointCounter.textContent = `${points.length} узлов`;
-  updateZoomReadout();
+function drawBrushStroke(ctx, stroke, width, height) {
+  const points = stroke.points || [];
+  if (!points.length) return;
+  const size = stroke.size_ratio ? Number(stroke.size_ratio) * height : Number(stroke.size || 6);
+  ctx.save();
+  ctx.globalCompositeOperation = stroke.tool === "eraser" ? "destination-out" : "source-over";
+  ctx.strokeStyle = stroke.color || "rgba(255, 230, 0, 1)";
+  ctx.fillStyle = stroke.color || "rgba(255, 230, 0, 1)";
+  ctx.lineWidth = size;
+  ctx.lineCap = stroke.shape === "square" ? "butt" : "round";
+  ctx.lineJoin = stroke.shape === "square" ? "miter" : "round";
+  if (points.length === 1) {
+    drawBrushDab(ctx, points[0], size, stroke.shape, width, height);
+  } else {
+    ctx.beginPath();
+    points.forEach((point, index) => {
+      const x = point.x * width;
+      const y = point.y * height;
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    if (stroke.shape === "square") {
+      points.forEach((point) => drawBrushDab(ctx, point, size, stroke.shape, width, height));
+    }
+  }
+  ctx.restore();
+}
+
+function drawBrushLayer(ctx, strokes, width, height) {
+  if (!strokes.length) return;
+  const layer = document.createElement("canvas");
+  layer.width = width;
+  layer.height = height;
+  const layerCtx = layer.getContext("2d");
+  strokes.forEach((stroke) => drawBrushStroke(layerCtx, stroke, width, height));
+  ctx.drawImage(layer, 0, 0);
+}
+
+function selectedContourObject() {
+  if (!state.contour?.objects?.length) return null;
+  return state.contour.objects[state.selectedObjectIndex] || state.contour.objects[0];
+}
+
+function setSelectedPoint(index) {
+  const points = selectedContourObject()?.points || [];
+  state.selectedPointIndex = Number.isInteger(index) && index >= 0 && index < points.length ? index : null;
+  updatePointReadout();
+}
+
+function updatePointReadout() {
+  const target = qs("#pointReadout");
+  if (!target) return;
+  const canvas = qs("#contourCanvas");
+  const point = selectedContourObject()?.points?.[state.selectedPointIndex];
+  if (!canvas || !point) {
+    const tool = state.editTool === "eraser" ? "Ластик" : state.editTool === "stick" ? "Палочками" : "Кисть";
+    const size = state.editTool === "eraser" ? state.eraserSize : state.brushSize;
+    target.textContent = `${tool}: ${size} px, ${state.brushShape === "square" ? "квадрат" : "круг"}`;
+    return;
+  }
+  target.textContent = `Точка ${state.selectedPointIndex + 1}: x=${Math.round(point.x * canvas.width)} px, y=${Math.round(point.y * canvas.height)} px`;
+}
+
+function findNearestPointIndex(screen, canvas, maxDistance = 14) {
+  const points = selectedContourObject()?.points || [];
+  let best = { index: null, distance: Infinity };
+  points.forEach((point, index) => {
+    const candidate = normalizedToScreen(point, canvas);
+    const distance = Math.hypot(candidate.x - screen.x, candidate.y - screen.y);
+    if (distance < best.distance) best = { index, distance };
+  });
+  return best.distance <= maxDistance ? best.index : null;
+}
+
+function distanceToSegment(point, start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (!lengthSquared) return Math.hypot(point.x - start.x, point.y - start.y);
+  const t = clamp(((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared, 0, 1);
+  return Math.hypot(point.x - (start.x + t * dx), point.y - (start.y + t * dy));
+}
+
+function findNearestSegmentIndex(point) {
+  const object = selectedContourObject();
+  const points = object?.points || [];
+  if (points.length < 2) return points.length - 1;
+  let best = { index: 0, distance: Infinity };
+  const segmentCount = object.type === "polygon" ? points.length : points.length - 1;
+  for (let index = 0; index < segmentCount; index += 1) {
+    const start = points[index];
+    const end = points[(index + 1) % points.length];
+    const distance = distanceToSegment(point, start, end);
+    if (distance < best.distance) best = { index, distance };
+  }
+  return best.index;
+}
+
+function insertPointAt(point) {
+  const object = selectedContourObject();
+  if (!object?.points) return;
+  const segmentIndex = findNearestSegmentIndex(point);
+  object.points.splice(segmentIndex + 1, 0, {
+    x: clamp(point.x, 0, 1),
+    y: clamp(point.y, 0, 1),
+  });
+  setSelectedPoint(segmentIndex + 1);
+  drawContour();
+}
+
+function renderObjectSelect() {
+  const select = qs("#objectSelect");
+  if (!select || !state.contour) return;
+  const objects = state.contour.objects || [];
+  state.selectedObjectIndex = clamp(state.selectedObjectIndex, 0, Math.max(objects.length - 1, 0));
+  setSelectedPoint(null);
+  select.innerHTML = objects
+    .map((object, index) => `<option value="${index}">${escapeHtml(object.label || object.id || `Объект ${index + 1}`)}</option>`)
+    .join("");
+  select.value = String(state.selectedObjectIndex);
+}
+
+function loadCanvasImage(url, canvas) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      state.editorImage = image;
+      const naturalWidth = image.naturalWidth || image.width || canvas.width;
+      const naturalHeight = image.naturalHeight || image.height || canvas.height;
+      const naturalLongSide = Math.max(naturalWidth, naturalHeight, 1);
+      const targetLongSide = Math.max(naturalLongSide, 1800);
+      const scale = targetLongSide / naturalLongSide;
+      canvas.width = Math.round(naturalWidth * scale);
+      canvas.height = Math.round(naturalHeight * scale);
+      resolve(image);
+    };
+    image.onerror = reject;
+    image.src = `${url}?t=${Date.now()}`;
+  });
 }
 
 function drawMarker(ctx, marker, width, height) {
   const x = marker.x * width;
   const y = marker.y * height;
   const color = marker.color || "#0ec76d";
+  if (marker.type === "point") {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = "#061823";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    if (marker.label) {
+      ctx.font = "12px Segoe UI, Arial, sans-serif";
+      ctx.fillText(marker.label, x + 8, y - 7);
+    }
+    ctx.restore();
+    return;
+  }
+
   const dir = marker.direction || "left";
   const length = 70;
   const sign = dir === "right" ? 1 : -1;
@@ -709,6 +1033,18 @@ function drawMarker(ctx, marker, width, height) {
   ctx.closePath();
   ctx.fill();
   ctx.restore();
+}
+
+function drawContour() {
+  const canvas = qs("#contourCanvas");
+  if (!canvas || !state.contour) return;
+  drawDxaScene(canvas, state.contour, state.currentStudy, state.view, true);
+
+  const pointCounter = qs("#roiPointCount");
+  if (pointCounter) pointCounter.textContent = `${(state.contour.brush_strokes || []).length} мазков`;
+  updatePointReadout();
+  updateZoomReadout();
+  updateHistoryControls();
 }
 
 function canvasPoint(event) {
@@ -744,14 +1080,18 @@ function screenToNormalized(x, y, canvas) {
 
 function updateZoomReadout() {
   const target = qs("#zoomValue");
-  if (target) target.textContent = `${Math.round(state.view.zoom * 100)}%`;
+  if (target) target.textContent = `${Math.round((state.view.zoom / (state.view.fitZoom || 1)) * 100)}%`;
+}
+
+function fitImageToViewer() {
+  state.view = { zoom: 1, fitZoom: 1, panX: 0, panY: 0 };
 }
 
 function setZoom(nextZoom, center = null) {
   const canvas = qs("#contourCanvas");
   if (!canvas) return;
   const oldZoom = state.view.zoom;
-  const newZoom = clamp(nextZoom, 1, 6);
+  const newZoom = clamp(nextZoom, 0.15, 4);
   const pivot = center || { x: canvas.width / 2, y: canvas.height / 2 };
   const before = screenToNormalized(pivot.x, pivot.y, canvas);
   state.view.zoom = newZoom;
@@ -798,32 +1138,221 @@ function defaultContourForStudy(study) {
 }
 
 function qualitySummary(study) {
-  if (study.quality_class === 0) return "Качественное исследование";
-  if (study.quality_class === 1) return "Есть нарушение качества";
+  const value = effectiveQualityClass(study);
+  if (value === 0) return "Корректное исследование";
+  if (value === 1) return "Некорректное исследование";
   return "Не определено";
+}
+
+async function loadAiContour(study) {
+  try {
+    const data = await getJson(`/api/studies/${study.id}/ai-contour`);
+    return data.contour;
+  } catch (_) {
+    return defaultContourForStudy(study);
+  }
+}
+
+function cloneContour(contour) {
+  return JSON.parse(JSON.stringify(contour || {}));
+}
+
+function editorSnapshot() {
+  return {
+    contour: cloneContour(state.contour),
+    selectedObjectIndex: state.selectedObjectIndex,
+    selectedPointIndex: state.selectedPointIndex,
+  };
+}
+
+function restoreEditorSnapshot(snapshot) {
+  if (!snapshot) return;
+  state.contour = cloneContour(snapshot.contour);
+  state.selectedObjectIndex = snapshot.selectedObjectIndex || 0;
+  state.selectedPointIndex = Number.isInteger(snapshot.selectedPointIndex) ? snapshot.selectedPointIndex : null;
+  state.activeStroke = null;
+  state.stickStroke = null;
+  renderObjectSelect();
+  drawContour();
+}
+
+function updateHistoryControls() {
+  const undo = qs("#undoEdit");
+  const redo = qs("#redoEdit");
+  if (undo) undo.disabled = state.undoStack.length === 0;
+  if (redo) redo.disabled = state.redoStack.length === 0;
+}
+
+function pushUndoSnapshot() {
+  if (!state.contour) return;
+  state.undoStack.push(editorSnapshot());
+  if (state.undoStack.length > state.maxHistory) state.undoStack.shift();
+  state.redoStack = [];
+  updateHistoryControls();
+}
+
+function undoEdit() {
+  if (!state.undoStack.length) return;
+  state.redoStack.push(editorSnapshot());
+  restoreEditorSnapshot(state.undoStack.pop());
+  updateHistoryControls();
+}
+
+function redoEdit() {
+  if (!state.redoStack.length) return;
+  state.undoStack.push(editorSnapshot());
+  restoreEditorSnapshot(state.redoStack.pop());
+  updateHistoryControls();
+}
+
+function resetEditorChanges() {
+  if (!state.initialContour) return;
+  pushUndoSnapshot();
+  state.contour = cloneContour(state.initialContour);
+  state.selectedObjectIndex = 0;
+  state.selectedPointIndex = null;
+  state.activeStroke = null;
+  state.stickStroke = null;
+  renderObjectSelect();
+  drawContour();
+  updateHistoryControls();
+  const saveStatus = qs("#saveStatus");
+  if (saveStatus) saveStatus.textContent = "Изменения отменены";
+}
+
+function updateVariantLink(studyId) {
+  const select = qs("#variantSelect");
+  const link = qs("#openVariant");
+  if (!select || !link) return;
+  link.href = `/api/studies/${studyId}/variant/${select.value}`;
+}
+
+function currentBrushPoint(event) {
+  const point = canvasPoint(event);
+  return {
+    x: clamp(point.x, 0, 1),
+    y: clamp(point.y, 0, 1),
+  };
+}
+
+function startBrushStroke(event) {
+  pushUndoSnapshot();
+  state.contour.brush_strokes = state.contour.brush_strokes || [];
+  state.contour.machine_eraser_strokes = state.contour.machine_eraser_strokes || [];
+  const size = state.editTool === "eraser" ? state.eraserSize : state.brushSize;
+  const canvas = qs("#contourCanvas");
+  const rect = canvas?.getBoundingClientRect();
+  state.activeStroke = {
+    tool: state.editTool,
+    size,
+    size_ratio: rect?.height ? size / rect.height : undefined,
+    shape: state.brushShape,
+    color: "rgba(255, 230, 0, 1)",
+    points: [currentBrushPoint(event)],
+  };
+  state.contour.brush_strokes.push(state.activeStroke);
+  if (state.editTool === "eraser") {
+    state.contour.machine_eraser_strokes.push(state.activeStroke);
+  }
+  drawContour();
+}
+
+function extendBrushStroke(event) {
+  if (!state.activeStroke) return;
+  const point = currentBrushPoint(event);
+  const last = state.activeStroke.points[state.activeStroke.points.length - 1];
+  if (!last || Math.hypot(point.x - last.x, point.y - last.y) > 0.0015) {
+    state.activeStroke.points.push(point);
+    drawContour();
+  }
+}
+
+function finishBrushStroke() {
+  state.activeStroke = null;
+}
+
+function updateBrushControls() {
+  qs("#brushTool")?.classList.toggle("active", state.editTool === "brush");
+  qs("#stickTool")?.classList.toggle("active", state.editTool === "stick");
+  qs("#eraserTool")?.classList.toggle("active", state.editTool === "eraser");
+  const size = state.editTool === "eraser" ? state.eraserSize : state.brushSize;
+  const range = qs("#brushSizeRange");
+  const label = qs("#brushSizeLabel");
+  if (range) range.value = String(size);
+  if (label) label.textContent = state.editTool === "eraser" ? "Толщина ластика" : "Толщина кисти";
+  const value = qs("#brushSizeValue");
+  if (value) value.textContent = `${size} px`;
+  updatePointReadout();
+}
+
+function updateFullscreenButton() {
+  const button = qs("#fullscreenEditor");
+  if (!button) return;
+  const editor = qs("[data-page='editor']");
+  const isEditorFullscreen = document.fullscreenElement === editor;
+  button.textContent = isEditorFullscreen ? "Свернуть" : "На весь экран";
+}
+
+function addStickPoint(event) {
+  state.contour.brush_strokes = state.contour.brush_strokes || [];
+  const point = currentBrushPoint(event);
+  if (!state.stickStroke) {
+    pushUndoSnapshot();
+    const canvas = qs("#contourCanvas");
+    const rect = canvas?.getBoundingClientRect();
+    state.stickStroke = {
+      tool: "brush",
+      mode: "stick",
+      size: state.brushSize,
+      size_ratio: rect?.height ? state.brushSize / rect.height : undefined,
+      shape: state.brushShape,
+      color: "rgba(255, 230, 0, 1)",
+      points: [point],
+    };
+    state.contour.brush_strokes.push(state.stickStroke);
+  } else {
+    state.stickStroke.points.push(point);
+  }
+  drawContour();
+}
+
+function finishStickStroke(cancel = false) {
+  if (!state.stickStroke) return;
+  if (cancel) {
+    state.contour.brush_strokes = (state.contour.brush_strokes || []).filter((stroke) => stroke !== state.stickStroke);
+  }
+  state.stickStroke = null;
+  drawContour();
 }
 
 async function setupStudyPage() {
   const root = qs("[data-page='study']");
-  const canvas = qs("#studyCanvas");
-  if (!root || !canvas) return;
+  const image = qs("#studyImage");
+  const imageLink = qs("#studyImageLink");
+  const showOverlay = qs("#showOverlay");
+  const showPreview = qs("#showPreview");
+  if (!root || !image || !imageLink) return;
   const data = await getJson(`/api/studies/${root.dataset.studyId}`);
   const study = data.study;
-  const contour = data.contours[0]?.payload || defaultContourForStudy(study);
   qs("#studyTitle").textContent = study.display_name;
   qs("#studyFileName").textContent = study.display_name;
   qs("#studyContainer").textContent = study.group_name === "Отдельные файлы" ? "отдельный файл" : study.group_name;
-  qs("#studyProcessingStatus").textContent = statusLabel(study);
   qs("#studyQualityClass").textContent = qualitySummary(study);
-  qs("#studyQualityCard").classList.toggle("bad", study.quality_class === 1);
-  qs("#studyQualityCard").classList.toggle("ok", study.quality_class === 0);
   qs("#studyRegion").textContent = study.anatomical_region || "-";
   qs("#studyLaterality").textContent = studyLaterality(study) || "-";
   qs("#studyViolations").textContent = study.violation_type || "Не выявлены";
-  qs("#studyProbability").textContent = study.quality_prob ?? "-";
   qs("#studyTime").textContent = study.time_of_processing ? `${study.time_of_processing} c` : "-";
-  qs("#studyComment").value = study.metadata?.manual_comment || "";
-  drawDxaScene(canvas, contour, study, { zoom: 1, panX: 0, panY: 0 }, false);
+  const overlayUrl = `/api/studies/${study.id}/overlay`;
+  const previewUrl = `/api/studies/${study.id}/preview`;
+  const setStudyImage = (url, mode) => {
+    image.src = url;
+    imageLink.href = url;
+    showOverlay?.classList.toggle("active", mode === "overlay");
+    showPreview?.classList.toggle("active", mode === "preview");
+  };
+  setStudyImage(overlayUrl, "overlay");
+  showOverlay?.addEventListener("click", () => setStudyImage(overlayUrl, "overlay"));
+  showPreview?.addEventListener("click", () => setStudyImage(previewUrl, "preview"));
 }
 
 async function setupEditor() {
@@ -833,29 +1362,19 @@ async function setupEditor() {
   const data = await getJson(`/api/studies/${root.dataset.studyId}`);
   const study = data.study;
   state.currentStudy = study;
-  const latest = data.contours[0]?.payload || {
-    schema: "dxa-quality-contour-v1",
-    region: study.anatomical_region || "Проксимальный отдел бедра",
-    coordinate_space: "normalized_preview",
-    objects: [{ id: "roi-main", label: "ROI", type: "polygon", points: [
-      { x: 0.73, y: 0.22 },
-      { x: 0.68, y: 0.25 },
-      { x: 0.63, y: 0.31 },
-      { x: 0.59, y: 0.40 },
-      { x: 0.56, y: 0.52 },
-      { x: 0.54, y: 0.66 },
-      { x: 0.53, y: 0.82 },
-    ] }],
-    markers: [{ id: "marker-1", type: "arrow", color: "#0ec76d", x: 0.36, y: 0.48, direction: "left" }],
-  };
-  latest.objects[0].type = "polyline";
+  const savedPayload = data.contours[0]?.payload;
+  const latest = savedPayload?.source === "manual_edit" ? savedPayload : await loadAiContour(study);
+  latest.objects = latest.objects?.length ? latest.objects : defaultContourForStudy(study).objects;
   state.contour = latest;
+  state.initialContour = cloneContour(latest);
+  state.undoStack = [];
+  state.redoStack = [];
+  state.selectedObjectIndex = 0;
   qs("#editorFileName").textContent = study.display_name;
   qs("#editorStatus").textContent = study.processing_status || study.status;
   qs("#reviewRegion").value = study.anatomical_region || "Проксимальный отдел бедра";
   qs("#reviewLaterality").value = study.metadata?.laterality || "";
   qs("#reviewClass").value = String(study.quality_class ?? 0);
-  qs("#reviewProb").value = study.quality_prob ?? "";
   qs("#reviewStatus").value = study.processing_status || "Success";
   qs("#reviewComment").value = study.metadata?.manual_comment || "";
   qs("#dicomSummary").textContent = [
@@ -871,10 +1390,28 @@ async function setupEditor() {
         <div class="file-meta"><span>${contour.source}</span><span>${new Date(contour.created_at).toLocaleString("ru-RU")}</span></div>
       </div>`).join("")
     : `<div class="empty-state">Версий пока нет</div>`;
+  renderObjectSelect();
+  await loadCanvasImage(`/api/studies/${study.id}/editor-image`, canvas)
+    .catch(() => loadCanvasImage(`/api/studies/${study.id}/preview`, canvas))
+    .catch(() => loadCanvasImage(`/api/studies/${study.id}/overlay`, canvas))
+    .catch(() => null);
+  fitImageToViewer();
   drawContour();
   setupViewerSettings();
+  updateBrushControls();
+  updateVariantLink(study.id);
+  qs("#variantSelect")?.addEventListener("change", () => updateVariantLink(study.id));
+  qs("#cancelReview")?.addEventListener("click", resetEditorChanges);
+  qs("#cancelReviewTop")?.addEventListener("click", resetEditorChanges);
+
+  qs("#objectSelect")?.addEventListener("change", (event) => {
+    state.selectedObjectIndex = Number(event.target.value);
+    setSelectedPoint(null);
+    drawContour();
+  });
 
   qs("#reviewRegion").addEventListener("change", () => {
+    pushUndoSnapshot();
     state.contour.region = qs("#reviewRegion").value;
     updateLateralityField();
     renderViolationChecklist(collectViolations().join("; "));
@@ -883,23 +1420,20 @@ async function setupEditor() {
 
   canvas.addEventListener("pointerdown", (event) => {
     canvas.setPointerCapture(event.pointerId);
-    const screen = pointerCanvasPosition(event);
-    const points = state.contour.objects[0].points;
-    state.draggingPoint = points.findIndex((candidate) => {
-      const candidateScreen = normalizedToScreen(candidate, canvas);
-      return Math.hypot(candidateScreen.x - screen.x, candidateScreen.y - screen.y) < 14;
-    });
-    state.isPanning = state.draggingPoint < 0;
-    state.lastPointer = { clientX: event.clientX, clientY: event.clientY };
+    if (event.button === 1 || event.altKey || event.code === "Space") {
+      state.isPanning = true;
+      state.lastPointer = { clientX: event.clientX, clientY: event.clientY };
+      return;
+    }
+    if (state.editTool === "stick") {
+      addStickPoint(event);
+      return;
+    }
+    startBrushStroke(event);
   });
   canvas.addEventListener("pointermove", (event) => {
-    if (state.draggingPoint !== null && state.draggingPoint >= 0) {
-      const point = canvasPoint(event);
-      state.contour.objects[0].points[state.draggingPoint] = {
-        x: clamp(point.x, 0.02, 0.98),
-        y: clamp(point.y, 0.02, 0.98),
-      };
-      drawContour();
+    if (state.activeStroke) {
+      extendBrushStroke(event);
       return;
     }
     if (state.isPanning && state.lastPointer) {
@@ -914,60 +1448,119 @@ async function setupEditor() {
   });
   canvas.addEventListener("pointerup", (event) => {
     canvas.releasePointerCapture(event.pointerId);
-    state.draggingPoint = null;
+    finishBrushStroke();
     state.isPanning = false;
     state.lastPointer = null;
   });
   canvas.addEventListener("pointercancel", () => {
-    state.draggingPoint = null;
+    finishBrushStroke();
     state.isPanning = false;
     state.lastPointer = null;
   });
+
   canvas.addEventListener("wheel", (event) => {
     event.preventDefault();
     const screen = pointerCanvasPosition(event);
-    const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const factor = event.deltaY < 0 ? 1.08 : 1 / 1.08;
     setZoom(state.view.zoom * factor, screen);
   }, { passive: false });
   qs("#zoomIn").addEventListener("click", () => {
-    setZoom(state.view.zoom * 1.2);
+    setZoom(state.view.zoom * 1.12);
   });
   qs("#zoomOut").addEventListener("click", () => {
-    setZoom(state.view.zoom / 1.2);
+    setZoom(state.view.zoom / 1.12);
   });
   qs("#zoomReset").addEventListener("click", () => {
-    state.view = { zoom: 1, panX: 0, panY: 0 };
+    fitImageToViewer();
     drawContour();
   });
-  qs("#addPoint").addEventListener("click", () => {
-    const points = state.contour.objects[0].points;
-    const last = points[points.length - 1] || { x: 0.55, y: 0.70 };
-    points.push({ x: Math.min(0.96, last.x + 0.01), y: Math.min(0.94, last.y + 0.06) });
+  qs("#undoEdit")?.addEventListener("click", undoEdit);
+  qs("#redoEdit")?.addEventListener("click", redoEdit);
+  qs("#brushTool")?.addEventListener("click", () => {
+    state.editTool = "brush";
+    finishStickStroke();
+    updateBrushControls();
+  });
+  qs("#stickTool")?.addEventListener("click", () => {
+    state.editTool = "stick";
+    updateBrushControls();
+  });
+  qs("#eraserTool")?.addEventListener("click", () => {
+    state.editTool = "eraser";
+    finishStickStroke();
+    updateBrushControls();
+  });
+  qs("#brushSizeRange")?.addEventListener("input", (event) => {
+    const size = Number(event.target.value || 6);
+    if (state.editTool === "eraser") state.eraserSize = size;
+    else state.brushSize = size;
+    updateBrushControls();
+  });
+  qs("#brushShapeSelect")?.addEventListener("change", (event) => {
+    state.brushShape = event.target.value;
+  });
+  qs("#machineOverlayToggle")?.addEventListener("change", (event) => {
+    state.showMachineOverlay = event.target.checked;
     drawContour();
   });
-  qs("#removePoint").addEventListener("click", () => {
-    const points = state.contour.objects[0].points;
-    if (points.length > 3) points.pop();
+  qs("#fullscreenEditor")?.addEventListener("click", () => {
+    const editor = qs("[data-page='editor']");
+    if (!document.fullscreenElement) editor?.requestFullscreen?.();
+    else document.exitFullscreen?.();
+    setTimeout(() => {
+      fitImageToViewer();
+      drawContour();
+    }, 120);
+  });
+  document.addEventListener("fullscreenchange", updateFullscreenButton);
+  qs("#resetAiContour")?.addEventListener("click", async () => {
+    pushUndoSnapshot();
+    state.contour = await loadAiContour(study);
+    state.contour.brush_strokes = [];
+    state.contour.machine_eraser_strokes = [];
+    state.selectedObjectIndex = 0;
+    state.selectedPointIndex = null;
+    state.activeStroke = null;
+    state.stickStroke = null;
+    renderObjectSelect();
     drawContour();
   });
-  qs("#addMarker").addEventListener("click", () => {
-    state.contour.markers = state.contour.markers || [];
-    state.contour.markers.push({
-      id: `marker-${Date.now()}`,
-      type: "arrow",
-      color: state.contour.markers.length % 2 ? "#ff1f1f" : "#0ec76d",
-      x: 0.42,
-      y: 0.50,
-      direction: "left",
-    });
-    drawContour();
+  document.addEventListener("keydown", (event) => {
+    if (!qs("[data-page='editor']")) return;
+    const key = event.key.toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && key === "z") {
+      event.preventDefault();
+      if (event.shiftKey) redoEdit();
+      else undoEdit();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && key === "c") {
+      event.preventDefault();
+      undoEdit();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && key === "y") {
+      event.preventDefault();
+      redoEdit();
+      return;
+    }
+    if (state.stickStroke && event.key === "Enter") {
+      event.preventDefault();
+      finishStickStroke();
+      return;
+    }
+    if (state.stickStroke && event.key === "Escape") {
+      event.preventDefault();
+      finishStickStroke(true);
+      return;
+    }
   });
   const saveHandler = async () => {
-    const qualityClass = Number(qs("#reviewClass").value);
-    const probabilityRaw = qs("#reviewProb").value;
     const violations = collectViolations();
+    const qualityClass = violations.length ? 1 : Number(qs("#reviewClass").value);
     state.contour.region = qs("#reviewRegion").value;
-    state.contour.objects[0].type = "polyline";
+    state.contour.source = "manual_edit";
+    state.contour.saved_at = new Date().toISOString();
     const saveStatus = qs("#saveStatus");
     if (saveStatus) saveStatus.textContent = "Сохранение...";
     await getJson(`/api/studies/${root.dataset.studyId}`, {
@@ -976,7 +1569,7 @@ async function setupEditor() {
       body: JSON.stringify({
         anatomical_region: qs("#reviewRegion").value,
         quality_class: qualityClass,
-        quality_prob: probabilityRaw === "" ? null : Number(probabilityRaw),
+        quality_prob: null,
         violation_type: violations.join("; "),
         processing_status: qs("#reviewStatus").value,
         metadata: {
@@ -992,11 +1585,12 @@ async function setupEditor() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(state.contour),
     });
+    state.initialContour = cloneContour(state.contour);
+    qs("#variantSelect").value = "edited";
+    updateVariantLink(root.dataset.studyId);
     if (saveStatus) saveStatus.textContent = "Изменения сохранены";
-    window.location.reload();
   };
   qs("#saveReview").addEventListener("click", saveHandler);
-  qs("#saveReviewTop").addEventListener("click", saveHandler);
 }
 
 function updateLateralityField() {
@@ -1035,14 +1629,11 @@ function collectViolations() {
 function setupViewerSettings() {
   const imageBrightness = qs("#imageBrightnessRange");
   const imageContrast = qs("#imageContrastRange");
-  const units = qs("#unitSelect");
-  if (!imageBrightness || !imageContrast || !units) return;
+  if (!imageBrightness || !imageContrast) return;
   const savedImageBrightness = localStorage.getItem("imageBrightness");
   const savedImageContrast = localStorage.getItem("imageContrast");
-  const savedUnits = localStorage.getItem("units");
   if (savedImageBrightness) imageBrightness.value = savedImageBrightness;
   if (savedImageContrast) imageContrast.value = savedImageContrast;
-  if (savedUnits) units.value = savedUnits;
   imageBrightness.addEventListener("input", () => {
     localStorage.setItem("imageBrightness", imageBrightness.value);
     drawContour();
@@ -1050,9 +1641,6 @@ function setupViewerSettings() {
   imageContrast.addEventListener("input", () => {
     localStorage.setItem("imageContrast", imageContrast.value);
     drawContour();
-  });
-  units.addEventListener("change", () => {
-    localStorage.setItem("units", units.value);
   });
 }
 

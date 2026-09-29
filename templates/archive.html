@@ -14,6 +14,18 @@
       <p>Группы</p>
       <span id="archiveCounter">0 записей</span>
     </div>
+    <div class="archive-actions">
+      <button class="btn ghost" id="archiveSelectAll" type="button">Выбрать все</button>
+      <label class="field-row compact-field export-format">
+        <span>Формат</span>
+        <select id="archiveExportFormat">
+          <option value="csv">CSV</option>
+          <option value="xlsx">XLSX</option>
+        </select>
+      </label>
+      <button class="btn primary" id="archiveDownload" type="button" disabled>Скачать</button>
+      <span id="archiveSelectedCounter">0 выбрано</span>
+    </div>
     <div class="filter-bar" aria-label="Фильтры архива">
       <label class="field-row compact-field search-field">
         <span>Поиск</span>

@@ -9,7 +9,7 @@ ARCHIVE_DIR = STORAGE_DIR / "archive"
 DB_PATH = STORAGE_DIR / "dxa_quality.sqlite3"
 
 APP_NAME = "Оценка качества денситометрии"
-DEMO_PROCESSING_ENABLED = True
+DEMO_PROCESSING_ENABLED = False
 
 SUPPORTED_REPORT_FORMATS = ("csv", "xlsx")
 MAX_PROCESSING_SECONDS_PER_STUDY = 180

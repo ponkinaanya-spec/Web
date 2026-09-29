@@ -242,17 +242,14 @@ def list_contours(study_id: str) -> list[dict[str, Any]]:
     return contours
 
 
-def export_results(job_id: str, output_format: str) -> Path:
-    studies = list_studies(job_id)
+def write_studies_report(studies: list[dict[str, Any]], output_path: Path, output_format: str) -> Path:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = RESULTS_DIR / f"{job_id}.{output_format}"
     columns = [
         "path_to_study",
         "study_uid",
         "image_uid",
         "anatomical_region",
         "quality_class",
-        "quality_prob",
         "violation_type",
         "processing_status",
         "time_of_processing",
@@ -272,9 +269,6 @@ def export_results(job_id: str, output_format: str) -> Path:
                 "anatomical_region": study.get("anatomical_region") or "",
                 "quality_class": study.get("quality_class")
                 if study.get("quality_class") is not None
-                else "",
-                "quality_prob": study.get("quality_prob")
-                if study.get("quality_prob") is not None
                 else "",
                 "violation_type": violation_type,
                 "processing_status": study.get("processing_status") or "",
@@ -297,3 +291,24 @@ def export_results(job_id: str, output_format: str) -> Path:
         sheet.append([row[column] for column in columns])
     workbook.save(output_path)
     return output_path
+
+
+def export_results(job_id: str, output_format: str) -> Path:
+    studies = list_studies(job_id)
+    output_path = RESULTS_DIR / f"{job_id}.{output_format}"
+    return write_studies_report(studies, output_path, output_format)
+
+
+def export_selected_studies(study_ids: list[str], output_format: str) -> Path:
+    if not study_ids:
+        raise ValueError("no_studies_selected")
+    placeholders = ", ".join("?" for _ in study_ids)
+    with connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM studies WHERE id IN ({placeholders})",
+            tuple(study_ids),
+        ).fetchall()
+    by_id = {item["id"]: item for item in rows_to_dicts(rows)}
+    studies = [by_id[study_id] for study_id in study_ids if study_id in by_id]
+    output_path = RESULTS_DIR / f"archive-selected-{utcnow().replace(':', '').replace('-', '')}.{output_format}"
+    return write_studies_report(studies, output_path, output_format)

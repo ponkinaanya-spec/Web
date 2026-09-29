@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=DXA Quality
+Comment=Local DICOM quality-control application
+Exec=bash -lc 'cd "$(dirname "$1")" && ./launch_app.sh' dxa-quality %k
+Terminal=false
+Categories=Science;MedicalSoftware;
+StartupNotify=true

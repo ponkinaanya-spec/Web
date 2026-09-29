@@ -9,7 +9,8 @@
     </div>
     <div class="toolbar">
       <a class="btn ghost" href="/archive">Архив</a>
-      <button class="btn primary" id="saveReviewTop">Сохранить изменения</button>
+      <button class="btn ghost" id="fullscreenEditor" type="button">На весь экран</button>
+      <button class="btn ghost" id="cancelReviewTop" type="button">Отменить изменения</button>
     </div>
   </header>
 
@@ -24,18 +25,38 @@
           <button class="btn ghost icon-btn" id="zoomOut" title="Уменьшить масштаб">-</button>
           <span class="zoom-readout" id="zoomValue">100%</span>
           <button class="btn ghost icon-btn" id="zoomIn" title="Увеличить масштаб">+</button>
-          <button class="btn ghost" id="zoomReset">1:1</button>
-          <button class="btn ghost" id="addPoint">+ узел</button>
-          <button class="btn ghost" id="removePoint">- узел</button>
-          <button class="btn ghost" id="addMarker">Маркер</button>
+          <button class="btn ghost" id="zoomReset">Вписать</button>
+          <button class="btn ghost icon-btn" id="undoEdit" type="button" title="Отменить последнее изменение" disabled>&larr;</button>
+          <button class="btn ghost icon-btn" id="redoEdit" type="button" title="Вернуть отменённое изменение" disabled>&rarr;</button>
+          <button class="btn ghost active" id="brushTool" type="button">Кисть</button>
+          <button class="btn ghost" id="stickTool" type="button">Палочками</button>
+          <button class="btn ghost" id="eraserTool" type="button">Ластик</button>
+          <button class="btn ghost" id="resetAiContour">Сброс к ML</button>
         </div>
       </div>
       <canvas id="contourCanvas" width="980" height="700"></canvas>
+      <div class="editor-readout" id="pointReadout">Кисть: рисуйте по снимку, ластик стирает разметку</div>
       <div class="viewer-settings">
         <div class="section-head">
-          <p>Просмотр снимка</p>
-          <span>только для просмотра</span>
+          <p>Инструменты разметки</p>
+          <span>кисть и ластик</span>
         </div>
+        <label class="range-row brush-size-row">
+          <span id="brushSizeLabel">Толщина кисти</span>
+          <input id="brushSizeRange" type="range" min="1" max="40" value="2">
+          <strong id="brushSizeValue">2 px</strong>
+        </label>
+        <label class="field-row">
+          <span>Форма кисти</span>
+          <select id="brushShapeSelect">
+            <option value="circle">Круг</option>
+            <option value="square">Квадрат</option>
+          </select>
+        </label>
+        <label class="check-row editor-toggle-row">
+          <input id="machineOverlayToggle" type="checkbox" checked>
+          <span>Показывать машинную разметку</span>
+        </label>
         <label class="range-row">
           <span>Яркость снимка</span>
           <input id="imageBrightnessRange" type="range" min="70" max="130" value="100">
@@ -43,14 +64,6 @@
         <label class="range-row">
           <span>Контраст снимка</span>
           <input id="imageContrastRange" type="range" min="70" max="140" value="100">
-        </label>
-        <label class="field-row">
-          <span>Единицы измерения</span>
-          <select id="unitSelect">
-            <option value="mm">Миллиметры</option>
-            <option value="cm">Сантиметры</option>
-            <option value="px">Пиксели</option>
-          </select>
         </label>
       </div>
     </section>
@@ -78,15 +91,11 @@
           </select>
         </label>
         <label class="field-row">
-          <span>Класс качества</span>
+          <span>Класс корректности</span>
           <select id="reviewClass">
             <option value="0">Качественное исследование</option>
             <option value="1">Есть нарушение</option>
           </select>
-        </label>
-        <label class="field-row">
-          <span>Вероятность нарушения</span>
-          <input id="reviewProb" type="number" min="0" max="1" step="0.001">
         </label>
         <label class="field-row">
           <span>Статус обработки</span>
@@ -99,7 +108,7 @@
       </div>
 
       <div class="check-panel">
-        <p>Нарушения качества</p>
+        <p>Нарушения</p>
         <div id="violationChecklist" class="check-list"></div>
       </div>
 
@@ -116,7 +125,22 @@
       </div>
 
       <button class="btn primary full sticky-save" id="saveReview">Сохранить изменения</button>
+      <button class="btn ghost full" id="cancelReview" type="button">Отменить изменения</button>
       <div id="saveStatus" class="save-status"></div>
+
+      <div class="section-head version-head">
+        <p>Какой файл сохранить</p>
+        <span>варианты изображения</span>
+      </div>
+      <label class="field-row">
+        <span>Версия файла</span>
+        <select id="variantSelect">
+          <option value="edited">Ручная правка</option>
+          <option value="machine">Машинная разметка</option>
+          <option value="original">Исходный снимок</option>
+        </select>
+      </label>
+      <a class="btn ghost full" id="openVariant" href="#" target="_blank" rel="noopener">Открыть выбранный файл</a>
 
       <div class="section-head version-head">
         <p>Версии контура</p>

@@ -1,0 +1,22 @@
+services:
+  dxa-quality:
+    build:
+      context: .
+    image: dxa-quality-integrated:local
+    container_name: dxa-quality-integrated
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      DXA_MODEL_DIR: /app/models
+      DXA_DEVICE: cpu
+    volumes:
+      - dxa-quality-storage:/app/storage
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+volumes:
+  dxa-quality-storage:
+
