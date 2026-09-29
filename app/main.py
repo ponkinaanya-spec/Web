@@ -93,6 +93,22 @@ def read_ml_result_for_study(study: dict) -> dict | None:
         return None
 
 
+def is_manual_contour(contour: dict) -> bool:
+    payload = contour.get("payload") or {}
+    return contour.get("source") == "manual" or payload.get("source") == "manual_edit"
+
+
+def list_manual_contours(study_id: str) -> list[dict]:
+    return [contour for contour in list_contours(study_id) if is_manual_contour(contour)]
+
+
+def attach_manual_contour_state(study: dict) -> dict:
+    manual_contours = list_manual_contours(study["id"])
+    study["has_manual_contour"] = bool(manual_contours)
+    study["manual_contour_path"] = manual_contours[0]["id"] if manual_contours else None
+    return study
+
+
 def upload_rejected_error(errors: list[dict[str, str]]) -> HTTPException:
     return HTTPException(
         status_code=400,
@@ -270,7 +286,7 @@ async def api_job(job_id: str):
     job = get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Обработка не найдена")
-    return {"job": job, "studies": list_studies(job_id)}
+    return {"job": job, "studies": [attach_manual_contour_state(study) for study in list_studies(job_id)]}
 
 
 @app.get("/api/studies/{study_id}")
@@ -278,6 +294,7 @@ async def api_study(study_id: str):
     study = get_study(study_id)
     if not study:
         raise HTTPException(status_code=404, detail="Исследование не найдено")
+    attach_manual_contour_state(study)
     return {"study": study, "contours": list_contours(study_id)}
 
 
@@ -365,7 +382,7 @@ async def api_study_variant(study_id: str, variant: str):
         return FileResponse(overlay_path, media_type="image/png", filename=f"{study_id}_machine.png")
 
     if variant == "edited":
-        contours = list_contours(study_id)
+        contours = list_manual_contours(study_id)
         if not contours:
             raise HTTPException(status_code=404, detail="Ручная версия пока не сохранена")
         edited_path = create_markup_overlay(
@@ -450,7 +467,7 @@ async def api_delete_contour(study_id: str, contour_id: str):
 async def api_archive():
     jobs = list_jobs()
     studies = [
-        study
+        attach_manual_contour_state(study)
         for study in list_studies()
         if study.get("processing_status") in {"Success", "ManualReview"}
     ]

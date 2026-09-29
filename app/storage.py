@@ -259,7 +259,15 @@ def delete_contour(contour_id: str) -> dict[str, Any] | None:
     with connect() as conn:
         conn.execute("DELETE FROM contours WHERE id = ?", (contour_id,))
     remaining = list_contours(contour["study_id"])
-    update_study(contour["study_id"], contour_path=remaining[0]["id"] if remaining else None)
+    manual_remaining = [
+        item
+        for item in remaining
+        if item.get("source") == "manual" or (item.get("payload") or {}).get("source") == "manual_edit"
+    ]
+    update_study(
+        contour["study_id"],
+        contour_path=manual_remaining[0]["id"] if manual_remaining else None,
+    )
     return contour
 
 

@@ -511,10 +511,23 @@ function resultBadge(study) {
   return `<span class="badge warn">ошибка</span>`;
 }
 
+function isManualContour(contour) {
+  return contour?.source === "manual" || contour?.payload?.source === "manual_edit";
+}
+
+function manualContours(contours) {
+  return (contours || []).filter(isManualContour);
+}
+
+function hasManualContour(study) {
+  return Boolean(study.has_manual_contour || study.manual_contour_path);
+}
+
 function previewCell(study) {
-  const overlayUrl = study.contour_path ? `/api/studies/${study.id}/variant/edited` : `/api/studies/${study.id}/overlay`;
+  const manual = hasManualContour(study);
+  const overlayUrl = manual ? `/api/studies/${study.id}/variant/edited` : `/api/studies/${study.id}/overlay`;
   const previewUrl = `/api/studies/${study.id}/preview`;
-  const overlayLabel = study.contour_path ? "Ручная" : "Overlay";
+  const overlayLabel = manual ? "Ручная" : "Overlay";
   return `
     <div class="preview-link">
       <a href="${overlayUrl}" target="_blank" rel="noopener" title="Открыть разметку">
@@ -1465,7 +1478,7 @@ async function setupStudyPage() {
   const overlayUrl = `/api/studies/${study.id}/overlay`;
   const previewUrl = `/api/studies/${study.id}/preview`;
   const editedUrl = `/api/studies/${study.id}/variant/edited`;
-  const hasEdited = data.contours.length > 0;
+  const hasEdited = hasManualContour(study) || manualContours(data.contours).length > 0;
   if (showEdited) showEdited.hidden = !hasEdited;
   const setStudyImage = (url, mode) => {
     image.src = url;
